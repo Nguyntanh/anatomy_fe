@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Activity, ShieldCheck, HeartPulse, Brain, Bone, Clock, Bot } from 'lucide-react';
 import Header from '@/components/layout/Header';
 import LeftSidebar from '@/components/layout/LeftSidebar';
@@ -6,18 +6,27 @@ import Footer from '@/components/layout/Footer';
 import BodyCanvas3D from '@/components/3d/BodyCanvas3D';
 import ChatPanel from '@/components/chat/ChatPanel';
 import type {
-  BodyCategory,
   BodyRegionId,
   ConsultationSession,
+  ChatMessage,
   SymptomItem,
   TriageStatus,
+  SystemStatus,
 } from '@/types/health';
 import {
   BODY_CATEGORIES,
-  INITIAL_REGION_STATES,
   INITIAL_SESSIONS,
-  SYSTEM_STATUS,
 } from '@/data/bodyData';
+import {
+  askChat,
+  fetchBodyZones,
+  fetchSystemStatus,
+  getApiErrorMessage,
+  getAuthenticatedUserId,
+  submitSymptom,
+  type AuthenticatedUser,
+  type BodyZone,
+} from '@/services/api';
 
 const REGION_LABELS: Record<BodyRegionId, string> = {
   head: 'Đầu',
@@ -28,7 +37,27 @@ const REGION_LABELS: Record<BodyRegionId, string> = {
   knee: 'Gối',
 };
 
-export default function Dashboard() {
+const REGION_ZONE_CODES: Record<BodyRegionId, string> = {
+  head: 'head_02',
+  chest: 'chest_01',
+  abdomen: 'abdomen_01',
+  spine: 'spine_01',
+  shoulder: 'shoulder_01',
+  knee: 'knee_01',
+};
+
+const STATUS_BY_COLOR: Record<'GREEN' | 'YELLOW' | 'RED', TriageStatus> = {
+  GREEN: 'normal',
+  YELLOW: 'monitoring',
+  RED: 'acute',
+};
+
+interface DashboardProps {
+  user: AuthenticatedUser;
+  onLogout: () => void;
+}
+
+export default function Dashboard({ user, onLogout }: DashboardProps) {
   const [activeRegionId, setActiveRegionId] = useState<BodyRegionId>('head');
   const [activeSessionId, setActiveSessionId] = useState<string>('session-1');
   const [regionStatuses, setRegionStatuses] = useState<Record<BodyRegionId, TriageStatus>>({
@@ -39,47 +68,182 @@ export default function Dashboard() {
     shoulder: 'normal',
     knee: 'normal',
   });
-  const [user] = useState({ fullName: 'Nguyễn Thị Mai', email: 'mai.nguyen@email.com' });
-  const [messages, setMessages] = useState<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [bodyZones, setBodyZones] = useState<BodyZone[]>([]);
+  const [zonesLoaded, setZonesLoaded] = useState(false);
+  const requestInFlight = useRef(false);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({
+    apiConnected: false,
+    guardrailsActive: false,
+    modelName: 'Chưa kết nối',
+  });
 
   const activeRegionName = REGION_LABELS[activeRegionId];
+
+  useEffect(() => {
+    let isMounted = true;
+    Promise.all([fetchBodyZones(), fetchSystemStatus()])
+      .then(([zones, status]) => {
+        if (!isMounted) return;
+        setBodyZones(zones);
+        setZonesLoaded(true);
+        setSystemStatus(status);
+      })
+      .catch(() => {
+        if (isMounted) {
+          setZonesLoaded(true);
+          setSystemStatus({
+            apiConnected: false,
+            guardrailsActive: false,
+            modelName: 'Chưa kết nối',
+          });
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const sendSymptomToBackend = async (
+    text: string,
+    regionId: BodyRegionId
+  ) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    const timestamp = new Date().toLocaleTimeString('vi-VN');
+    setActiveRegionId(regionId);
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'user', content: text, timestamp },
+    ]);
+    setIsStreaming(true);
+
+    try {
+      if (!zonesLoaded || !systemStatus.apiConnected) {
+        throw new Error('Backend chưa sẵn sàng. Vui lòng kiểm tra kết nối rồi thử lại.');
+      }
+
+      if (text.trim().length < 10) {
+        throw new Error('Vui lòng mô tả triệu chứng ít nhất 10 ký tự.');
+      }
+
+      const bodyPartId = REGION_ZONE_CODES[regionId];
+      if (!bodyZones.some((zone) => zone.zone_code === bodyPartId)) {
+        throw new Error(
+          `Backend chưa cấu hình vùng ${REGION_LABELS[regionId]} (${bodyPartId}).`
+        );
+      }
+
+      const result = await submitSymptom({
+        user_id: getAuthenticatedUserId(),
+        body_part_id: bodyPartId,
+        symptom_text: text.trim(),
+        severity_level: 'YELLOW',
+        client_timestamp: Date.now(),
+      });
+      const responseTimestamp = new Date().toLocaleTimeString('vi-VN');
+      const responseText = [
+        result.ai_advice,
+        result.warning_message,
+        result.disclaimer,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join('\n\n');
+
+      setRegionStatuses((previous) => ({
+        ...previous,
+        [regionId]: STATUS_BY_COLOR[result.status_color],
+      }));
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: result.symptom_id,
+          role: 'assistant',
+          content: responseText,
+          timestamp: responseTimestamp,
+        },
+      ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: getApiErrorMessage(error),
+          timestamp: new Date().toLocaleTimeString('vi-VN'),
+          isError: true,
+        },
+      ]);
+    } finally {
+      requestInFlight.current = false;
+      setIsStreaming(false);
+    }
+  };
 
   const handleSelectRegion = (regionId: BodyRegionId) => {
     setActiveRegionId(regionId);
   };
 
   const handleSelectSymptom = (symptom: SymptomItem) => {
-    setActiveRegionId(symptom.regionId);
-    const newStatuses = { ...regionStatuses, [symptom.regionId]: symptom.defaultStatus };
-    setRegionStatuses(newStatuses);
-    setMessages((prev) => [
-      ...prev,
-      { id: Date.now().toString(), role: 'user', content: symptom.label, timestamp: new Date().toLocaleTimeString('vi-VN') },
-    ]);
-    setIsStreaming(true);
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { id: (Date.now() + 1).toString(), role: 'assistant', content: `Đã ghi nhận triệu chứng "${symptom.label}" cho vùng ${REGION_LABELS[symptom.regionId]}. AI đang phân tích...`, timestamp: new Date().toLocaleTimeString('vi-VN') },
-      ]);
-      setIsStreaming(false);
-    }, 1500);
+    sendSymptomToBackend(
+      `Tôi đang có triệu chứng: ${symptom.label}.`,
+      symptom.regionId
+    );
   };
 
   const handleQuickSubmit = (text: string) => {
+    sendSymptomToBackend(text, activeRegionId);
+  };
+
+  const handleChatQuestion = async (
+    text: string,
+    regionId: BodyRegionId = activeRegionId
+  ) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
     setMessages((prev) => [
       ...prev,
-      { id: Date.now().toString(), role: 'user', content: text, timestamp: new Date().toLocaleTimeString('vi-VN') },
+      {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: text,
+        timestamp: new Date().toLocaleTimeString('vi-VN'),
+      },
     ]);
     setIsStreaming(true);
-    setTimeout(() => {
+
+    try {
+      if (!zonesLoaded || !systemStatus.apiConnected) {
+        throw new Error('Backend chưa sẵn sàng. Vui lòng kiểm tra kết nối rồi thử lại.');
+      }
+
+      const result = await askChat(text, REGION_ZONE_CODES[regionId]);
       setMessages((prev) => [
         ...prev,
-        { id: (Date.now() + 1).toString(), role: 'assistant', content: `Tôi đã nhận được thông tin: "${text}". Bạn có thể chọn vùng cơ thể cụ thể trên mô hình 3D để tôi tư vấn chi tiết hơn không?`, timestamp: new Date().toLocaleTimeString('vi-VN') },
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: [result.answer, result.disclaimer].filter(Boolean).join('\n\n'),
+          timestamp: new Date().toLocaleTimeString('vi-VN'),
+        },
       ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: getApiErrorMessage(error),
+          timestamp: new Date().toLocaleTimeString('vi-VN'),
+          isError: true,
+        },
+      ]);
+    } finally {
+      requestInFlight.current = false;
       setIsStreaming(false);
-    }, 1500);
+    }
   };
 
   const handleSelectSession = (sessionId: string) => {
@@ -93,19 +257,10 @@ export default function Dashboard() {
 
   const handleAskRegion = (regionId: BodyRegionId) => {
     setActiveRegionId(regionId);
-    const msg = `Tôi muốn tư vấn về vùng ${REGION_LABELS[regionId]}.`;
-    setMessages((prev) => [
-      ...prev,
-      { id: Date.now().toString(), role: 'user', content: msg, timestamp: new Date().toLocaleTimeString('vi-VN') },
-    ]);
-    setIsStreaming(true);
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { id: (Date.now() + 1).toString(), role: 'assistant', content: `Đã chuyển focus tới vùng ${REGION_LABELS[regionId]} trên mô hình 3D. Bạn có muốn mô tả triệu chứng cụ thể không?`, timestamp: new Date().toLocaleTimeString('vi-VN') },
-      ]);
-      setIsStreaming(false);
-    }, 1500);
+    handleChatQuestion(
+      `Tôi muốn tìm hiểu về vùng ${REGION_LABELS[regionId]}.`,
+      regionId
+    );
   };
 
   const session = INITIAL_SESSIONS.find((s) => s.id === activeSessionId) || INITIAL_SESSIONS[0];
@@ -113,16 +268,17 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col h-screen bg-[#F8FAFC] text-slate-900">
       <Header
-        userName={user.fullName}
+        userName={user.full_name}
         userEmail={user.email}
-        systemStatus={SYSTEM_STATUS as any}
-        onLogout={() => {}}
+        systemStatus={systemStatus}
+        onLogout={onLogout}
       />
       <div className="flex flex-1 overflow-hidden">
         <LeftSidebar
-          categories={BODY_CATEGORIES as BodyCategory[]}
+          categories={BODY_CATEGORIES}
           activeRegionId={activeRegionId}
           regionStatuses={regionStatuses}
+          isBusy={isStreaming}
           sessions={INITIAL_SESSIONS as ConsultationSession[]}
           activeSessionId={activeSessionId}
           onSelectRegion={handleSelectRegion}
@@ -200,6 +356,7 @@ export default function Dashboard() {
                         <BodyCanvas3D
                           activeRegionId={activeRegionId}
                           regionStatuses={regionStatuses}
+                          isBusy={isStreaming}
                           onSelectRegion={setActiveRegionId}
                           onAskRegionInChat={handleAskRegion}
                         />
@@ -227,14 +384,9 @@ export default function Dashboard() {
                           sessionTitle={session.title}
                           activeRegionName={activeRegionName}
                           activeRegionId={activeRegionId}
-                          messages={messages.map((m) => ({
-                            id: m.id,
-                            role: m.role,
-                            content: m.content,
-                            timestamp: m.timestamp,
-                          }))}
+                          messages={messages}
                           isStreaming={isStreaming}
-                          onSendMessage={() => {}}
+                          onSendMessage={handleChatQuestion}
                           onClearSession={handleNewSession}
                           onAskRegion={handleAskRegion}
                         />

@@ -2,9 +2,9 @@ import {
   useState,
   useRef,
   useEffect,
-  FormEvent,
-  KeyboardEvent,
   Fragment,
+  type FormEvent,
+  type KeyboardEvent,
 } from 'react';
 import {
   Mic,
@@ -115,12 +115,7 @@ export default function ChatPanel({
   };
 
   const askRegion = () => {
-    const regionNames: Record<BodyRegionId, string> = {
-      head: 'đầu', chest: 'ngực', abdomen: 'bụng', spine: 'cột sống',
-      shoulder: 'vai', knee: 'gối',
-    };
-    const msg = `Tôi có vấn đề ở vùng ${regionNames[activeRegionId]}. Bạn có thể tư vấn thêm không?`;
-    onSendMessage(msg);
+    onAskRegion(activeRegionId);
   };
 
   return (
@@ -169,12 +164,16 @@ export default function ChatPanel({
             className={`max-w-[85%] p-3 rounded-xl ${
               msg.role === 'user'
                 ? 'ml-auto bg-sky-50 text-slate-900 rounded-tr-none border border-sky-100'
-                : 'mr-auto bg-slate-50 text-slate-900 rounded-tl-none border border-slate-100'
+                : msg.isError
+                  ? 'mr-auto bg-red-50 text-red-900 rounded-tl-none border border-red-200'
+                  : 'mr-auto bg-slate-50 text-slate-900 rounded-tl-none border border-slate-100'
             }`}
           >
             {msg.role === 'assistant' && (
               <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-[10px] text-sky-600 font-medium">AI Trợ lý</span>
+                <span className={`text-[10px] font-medium ${msg.isError ? 'text-red-700' : 'text-sky-600'}`}>
+                  {msg.isError ? 'Không gửi được' : 'AI Trợ lý'}
+                </span>
                 {msg.isStreaming && (
                   <span className="text-[10px] text-slate-400 animate-pulse">● Đang trả lời...</span>
                 )}

@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   Brain,
   Wind,
@@ -7,7 +7,6 @@ import {
   HeartPulse,
   Search,
   ChevronDown,
-  ChevronRight,
   Clock,
   Plus,
 } from 'lucide-react';
@@ -38,6 +37,7 @@ interface LeftSidebarProps {
   categories: BodyCategory[];
   activeRegionId: BodyRegionId;
   regionStatuses: Record<BodyRegionId, TriageStatus>;
+  isBusy: boolean;
   sessions: ConsultationSession[];
   activeSessionId: string;
   onSelectRegion: (regionId: BodyRegionId) => void;
@@ -51,6 +51,7 @@ export default function LeftSidebar({
   categories,
   activeRegionId,
   regionStatuses,
+  isBusy,
   sessions,
   activeSessionId,
   onSelectRegion,
@@ -82,7 +83,7 @@ export default function LeftSidebar({
   const handleFormSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = quickInput.trim();
-    if (!trimmed) return;
+    if (!trimmed || isBusy) return;
     onQuickSubmitSymptom(trimmed);
     setQuickInput('');
   };
@@ -114,6 +115,7 @@ export default function LeftSidebar({
           </div>
           <button
             type="submit"
+            disabled={isBusy}
             className="px-2 py-1.5 text-xs text-slate-600 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors"
           >
             Gửi
@@ -126,9 +128,7 @@ export default function LeftSidebar({
             const Icon = CategoryIcon[cat.iconName] || Activity;
             const isExpanded = expandedCatId === cat.id;
             const isActive = cat.regionId === activeRegionId;
-            const symStatus = STATUS_BADGE_TEXT[
-              cat.symptoms[0]?.defaultStatus || 'normal'
-            ];
+            const regionStatus = STATUS_BADGE_TEXT[regionStatuses[cat.regionId]];
 
             return (
               <div
@@ -155,7 +155,12 @@ export default function LeftSidebar({
                       {cat.name}
                     </span>
                   </div>
-                  <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+                  <div className="flex items-center gap-1.5">
+                    <span className={`rounded border px-1.5 py-0.5 text-[9px] font-medium ${regionStatus.cls}`}>
+                      {regionStatus.label}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+                  </div>
                 </button>
                 {isExpanded && (
                   <div className="px-2.5 pb-2.5 pt-1 space-y-1 border-t border-slate-100">
@@ -165,6 +170,7 @@ export default function LeftSidebar({
                         <button
                           key={sym.id}
                           type="button"
+                          disabled={isBusy}
                           onClick={() => onSelectSymptom(sym)}
                           className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-slate-700 hover:bg-sky-50 hover:text-sky-800 transition-colors flex items-center justify-between gap-2"
                         >
@@ -201,6 +207,7 @@ export default function LeftSidebar({
           <button
             type="button"
             onClick={onNewSession}
+            disabled={isBusy}
             className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-700 hover:text-sky-800 px-2 py-1 rounded hover:bg-sky-50 transition-colors whitespace-nowrap"
           >
             <Plus className="w-3 h-3" />

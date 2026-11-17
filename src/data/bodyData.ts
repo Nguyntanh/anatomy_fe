@@ -1,4 +1,4 @@
-import type { BodyCategory, BodyRegionId, SymptomItem, TriageStatus } from '@/types/health';
+import type { BodyCategory, BodyRegionId, TriageStatus } from '@/types/health';
 
 export const BODY_REGIONS: Record<BodyRegionId, { name: string; anatomicalLabel: string }> = {
   head: { name: 'Đầu', anatomicalLabel: 'Craneal / Facial region' },
@@ -126,8 +126,3 @@ export const INITIAL_SESSIONS = [
   },
 ];
 
-export const SYSTEM_STATUS = {
-  apiConnected: true,
-  guardrailsActive: true,
-  modelName: 'Gemini Medical RAG',
-};

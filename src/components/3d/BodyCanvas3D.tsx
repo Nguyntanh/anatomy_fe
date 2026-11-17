@@ -62,6 +62,7 @@ function getAnchoredPosition(geometry: THREE.BufferGeometry, anchor: SurfaceAnch
 interface BodyCanvas3DProps {
   activeRegionId: BodyRegionId;
   regionStatuses: Record<BodyRegionId, TriageStatus>;
+  isBusy: boolean;
   onSelectRegion: (regionId: BodyRegionId) => void;
   onAskRegionInChat: (regionId: BodyRegionId) => void;
 }
@@ -104,6 +105,7 @@ function buildRegionSpheres(
 export default function BodyCanvas3D({
   activeRegionId,
   regionStatuses,
+  isBusy,
   onSelectRegion,
   onAskRegionInChat,
 }: BodyCanvas3DProps) {
@@ -300,7 +302,9 @@ export default function BodyCanvas3D({
   }, [activeRegionId, regionStatuses, onSelectRegion, autoRotate]);
 
   useEffect(() => {
-    if (!cameraRef.current || !controlsRef.current) return;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
     const config = REGION_CONFIGS.find((c) => c.id === activeRegionId);
     if (!config) return;
 
@@ -308,27 +312,29 @@ export default function BodyCanvas3D({
     const targetPos = bodyRootRef.current.localToWorld(
       getAnchoredPosition(bodyGeometryRef.current, config.anchor)
     );
-    const startPos = cameraRef.current.position.clone();
-    const startTarget = controlsRef.current.target.clone();
+    const startPos = camera.position.clone();
+    const startTarget = controls.target.clone();
     const duration = 800;
     const start = performance.now();
+    let frameId = 0;
 
     const animateFocus = () => {
       const elapsed = performance.now() - start;
       const t = Math.min(elapsed / duration, 1);
       const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      cameraRef.current.position.lerpVectors(
+      camera.position.lerpVectors(
         startPos,
         new THREE.Vector3(targetPos.x, targetPos.y + 0.5, targetPos.z + 1.8),
         eased
       );
-      controlsRef.current.target.lerpVectors(startTarget, targetPos, eased);
-      controlsRef.current.update();
+      controls.target.lerpVectors(startTarget, targetPos, eased);
+      controls.update();
       if (t < 1) {
-        requestAnimationFrame(animateFocus);
+        frameId = requestAnimationFrame(animateFocus);
       }
     };
     animateFocus();
+    return () => cancelAnimationFrame(frameId);
   }, [activeRegionId]);
 
   if (webglError) {
@@ -393,8 +399,9 @@ export default function BodyCanvas3D({
         {hoveredRegion && (
           <button
             type="button"
+            disabled={isBusy}
             onClick={() => onAskRegionInChat(hoveredRegion)}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-600 text-white text-[11px] font-medium hover:bg-sky-700 transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-600 text-white text-[11px] font-medium hover:bg-sky-700 transition-colors whitespace-nowrap disabled:opacity-50"
           >
             <Stethoscope className="w-3 h-3" />
             Hỏi AI về {hoveredRegion}
