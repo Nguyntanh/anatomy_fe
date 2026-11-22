@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 import type { SystemStatus } from '@/types/health';
+import type { BodyStatusMapResponse } from '@/types/health';
 
 export interface ApiResponse<T = unknown> {
   data: T;
@@ -97,6 +98,11 @@ api.interceptors.response.use(
 
 export async function fetchBodyZones(): Promise<BodyZone[]> {
   const { data } = await api.get<BodyZone[]>('/symptoms/zones');
+  return data;
+}
+
+export async function fetchBodyStatusMap(): Promise<BodyStatusMapResponse> {
+  const { data } = await api.get<BodyStatusMapResponse>('/symptoms/status');
   return data;
 }
 

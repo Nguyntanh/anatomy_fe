@@ -12,7 +12,9 @@ import type {
   SymptomItem,
   TriageStatus,
   SystemStatus,
+  BodyStatusMapResponse,
 } from '@/types/health';
+import { BACKEND_ZONE_TO_REGION, BODY_STATUS_TO_TRIAGE } from '@/types/health';
 import {
   BODY_CATEGORIES,
   INITIAL_SESSIONS,
@@ -20,6 +22,7 @@ import {
 import {
   askChat,
   fetchBodyZones,
+  fetchBodyStatusMap,
   fetchSystemStatus,
   getApiErrorMessage,
   getAuthenticatedUserId,
@@ -72,6 +75,7 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [bodyZones, setBodyZones] = useState<BodyZone[]>([]);
   const [zonesLoaded, setZonesLoaded] = useState(false);
+  const [bodyStatusMap, setBodyStatusMap] = useState<BodyStatusMapResponse | null>(null);
   const requestInFlight = useRef(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     apiConnected: false,
@@ -83,12 +87,30 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
 
   useEffect(() => {
     let isMounted = true;
-    Promise.all([fetchBodyZones(), fetchSystemStatus()])
-      .then(([zones, status]) => {
+    Promise.all([fetchBodyZones(), fetchSystemStatus(), fetchBodyStatusMap()])
+      .then(([zones, status, bodyStatus]) => {
         if (!isMounted) return;
         setBodyZones(zones);
         setZonesLoaded(true);
         setSystemStatus(status);
+        setBodyStatusMap(bodyStatus);
+
+        // Cập nhật regionStatuses từ body_status_map của backend
+        const newStatuses: Record<BodyRegionId, TriageStatus> = {
+          head: 'normal',
+          chest: 'normal',
+          abdomen: 'normal',
+          spine: 'normal',
+          shoulder: 'normal',
+          knee: 'normal',
+        };
+        bodyStatus.body_status_map.forEach((item) => {
+          const regionId = BACKEND_ZONE_TO_REGION[item.body_part_id];
+          if (regionId) {
+            newStatuses[regionId] = BODY_STATUS_TO_TRIAGE[item.status_color];
+          }
+        });
+        setRegionStatuses(newStatuses);
       })
       .catch(() => {
         if (isMounted) {
@@ -156,6 +178,22 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
         ...previous,
         [regionId]: STATUS_BY_COLOR[result.status_color],
       }));
+
+      // Refetch body status map để cập nhật màu vùng mới từ backend
+      try {
+        const updated = await fetchBodyStatusMap();
+        setBodyStatusMap(updated);
+        const newStatuses: Record<BodyRegionId, TriageStatus> = { ...regionStatuses };
+        updated.body_status_map.forEach((item) => {
+          const rid = BACKEND_ZONE_TO_REGION[item.body_part_id];
+          if (rid) {
+            newStatuses[rid] = BODY_STATUS_TO_TRIAGE[item.status_color];
+          }
+        });
+        setRegionStatuses(newStatuses);
+      } catch {
+        // Bỏ qua lỗi refetch, trạng thái local đã được cập nhật
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -356,6 +394,7 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
                         <BodyCanvas3D
                           activeRegionId={activeRegionId}
                           regionStatuses={regionStatuses}
+                          bodyStatusMap={bodyStatusMap}
                           isBusy={isStreaming}
                           onSelectRegion={setActiveRegionId}
                           onAskRegionInChat={handleAskRegion}

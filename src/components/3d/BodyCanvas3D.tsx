@@ -8,7 +8,8 @@ import {
   Layers,
   RotateCcw,
 } from "lucide-react";
-import type { BodyRegionId, TriageStatus } from "@/types/health";
+import type { BodyRegionId, TriageStatus, BodyStatusMapResponse } from "@/types/health";
+import { BACKEND_ZONE_TO_REGION, BODY_STATUS_TO_TRIAGE } from "@/types/health";
 import { createHumanBodyGeometry } from "./humanBodyGeometry";
 
 export const STATUS_COLORS: Record<TriageStatus, { color: number; emissive: number; ring: number }> = {
@@ -62,6 +63,7 @@ function getAnchoredPosition(geometry: THREE.BufferGeometry, anchor: SurfaceAnch
 interface BodyCanvas3DProps {
   activeRegionId: BodyRegionId;
   regionStatuses: Record<BodyRegionId, TriageStatus>;
+  bodyStatusMap?: BodyStatusMapResponse;
   isBusy: boolean;
   onSelectRegion: (regionId: BodyRegionId) => void;
   onAskRegionInChat: (regionId: BodyRegionId) => void;
@@ -69,9 +71,26 @@ interface BodyCanvas3DProps {
 function buildRegionSpheres(
   parent: THREE.Object3D,
   geometry: THREE.BufferGeometry,
-  regionStatuses: Record<BodyRegionId, TriageStatus>
+  regionStatuses: Record<BodyRegionId, TriageStatus>,
+  bodyStatusMap?: BodyStatusMapResponse
 ) {
   const regionSpheres: THREE.Mesh[] = [];
+
+  // Xây dựng lookup từ body_part_id (backend) -> BodyRegionId (frontend)
+  const regionToStatus: Record<BodyRegionId, TriageStatus> = { ...regionStatuses };
+  const regionToTooltip: Record<BodyRegionId, string> = {};
+
+  if (bodyStatusMap) {
+    bodyStatusMap.body_status_map.forEach((item) => {
+      const regionId = BACKEND_ZONE_TO_REGION[item.body_part_id];
+      if (regionId) {
+        regionToStatus[regionId] = BODY_STATUS_TO_TRIAGE[item.status_color];
+        if (item.short_tooltip) {
+          regionToTooltip[regionId] = item.short_tooltip;
+        }
+      }
+    });
+  }
 
   REGION_CONFIGS.forEach((cfg) => {
     const sphereGeometry = new THREE.SphereGeometry(cfg.radius, 16, 16);
@@ -88,10 +107,12 @@ function buildRegionSpheres(
     sphere.userData.regionId = cfg.id;
     sphere.userData.regionLabel = cfg.label;
     sphere.userData.surfaceAnchor = cfg.anchor;
+    // Lưu tooltip vào userData để hiển thị khi hover
+    sphere.userData.tooltip = regionToTooltip[cfg.id] ?? null;
     parent.add(sphere);
     regionSpheres.push(sphere);
 
-    const status = regionStatuses[cfg.id] || "normal";
+    const status = regionToStatus[cfg.id] ?? 'normal';
     const colorInfo = STATUS_COLORS[status] || STATUS_COLORS.normal;
     const safeColor = colorInfo && colorInfo.color ? colorInfo.color : STATUS_COLORS.normal.color;
     const safeEmissive = colorInfo && colorInfo.emissive ? colorInfo.emissive : STATUS_COLORS.normal.emissive;
@@ -105,6 +126,7 @@ function buildRegionSpheres(
 export default function BodyCanvas3D({
   activeRegionId,
   regionStatuses,
+  bodyStatusMap,
   isBusy,
   onSelectRegion,
   onAskRegionInChat,
@@ -114,6 +136,7 @@ export default function BodyCanvas3D({
   const [xrayMode, setXrayMode] = useState(false);
   const [webglError, setWebglError] = useState(false);
   const [hoveredRegion, setHoveredRegion] = useState<BodyRegionId | null>(null);
+  const [tooltipVisible, setTooltipVisible] = useState<{ regionId: BodyRegionId; text: string } | null>(null);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const bodyRootRef = useRef<THREE.Group | null>(null);
@@ -167,7 +190,7 @@ export default function BodyCanvas3D({
       new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 })
     );
     bodyRoot.add(bodyMesh);
-    const regionSpheres = buildRegionSpheres(bodyRoot, bodyGeometry, regionStatuses);
+    const regionSpheres = buildRegionSpheres(bodyRoot, bodyGeometry, regionStatuses, bodyStatusMap);
 
     const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
     camera.position.set(0.18, 0.84, 3);
@@ -228,11 +251,18 @@ export default function BodyCanvas3D({
       const intersects = raycaster.intersectObjects(regionSpheres);
       if (intersects.length > 0) {
         const regionId = intersects[0].object.userData.regionId as BodyRegionId;
+        const tooltip = intersects[0].object.userData.tooltip as string | null;
         setHoveredRegion(regionId);
         container.style.cursor = "pointer";
+        if (tooltip) {
+          setTooltipVisible({ regionId, text: tooltip });
+        } else {
+          setTooltipVisible(null);
+        }
       } else {
         setHoveredRegion(null);
         container.style.cursor = "default";
+        setTooltipVisible(null);
       }
     };
 
@@ -299,7 +329,7 @@ export default function BodyCanvas3D({
       renderer.dispose();
       container.removeChild(renderer.domElement);
     };
-  }, [activeRegionId, regionStatuses, onSelectRegion, autoRotate]);
+  }, [activeRegionId, regionStatuses, bodyStatusMap, onSelectRegion, autoRotate]);
 
   useEffect(() => {
     const camera = cameraRef.current;
@@ -406,6 +436,13 @@ export default function BodyCanvas3D({
             <Stethoscope className="w-3 h-3" />
             Hỏi AI về {hoveredRegion}
           </button>
+        )}
+        {tooltipVisible && (
+          <div
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-medium shadow-lg z-50 whitespace-nowrap border border-slate-700"
+          >
+            {tooltipVisible.text}
+          </div>
         )}
       </div>
     </div>

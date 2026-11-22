@@ -8,6 +8,46 @@ export type BodyRegionId =
 
 export type TriageStatus = 'normal' | 'monitoring' | 'acute';
 
+export type BodyStatusColor = 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN';
+
+export interface BodyStatusItem {
+  body_part_id: string;
+  status_color: BodyStatusColor;
+  risk_score: number;
+  last_updated: string;
+  short_tooltip?: string | null;
+}
+
+export interface BodyStatusMapResponse {
+  body_status_map: BodyStatusItem[];
+}
+
+// Mapping từ status_color (backend) sang TriageStatus (frontend Three.js)
+export const BODY_STATUS_TO_TRIAGE: Record<BodyStatusColor, TriageStatus> = {
+  GREEN: 'normal',
+  YELLOW: 'monitoring',
+  RED: 'acute',
+  UNKNOWN: 'normal',
+};
+
+// Màu chuẩn theo tài liệu EPIC 2 US 2
+export const BODY_STATUS_COLORS: Record<BodyStatusColor, string> = {
+  GREEN: '#22C55E',
+  YELLOW: '#EAB308',
+  RED: '#EF4444',
+  UNKNOWN: '#94A3B8',
+};
+
+// Mapping body_part_id (backend) -> BodyRegionId (frontend)
+export const BACKEND_ZONE_TO_REGION: Record<string, BodyRegionId> = {
+  head_02: 'head',
+  chest_01: 'chest',
+  abdomen_01: 'abdomen',
+  spine_01: 'spine',
+  shoulder_01: 'shoulder',
+  knee_01: 'knee',
+};
+
 export interface SymptomItem {
   id: string;
   label: string;
